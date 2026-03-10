@@ -1,7 +1,6 @@
 #this code basically is sed to see if the main parts from drawing a raw sample until the batch forming works as expected.
 #you can potentially resolve the tiny thing with train_annotations such that you can upload different json not only train 
-import argparse
-from pathlib import Path
+
 from pprint import PrettyPrinter
 
 import torch
@@ -26,14 +25,14 @@ from src.scanpath_video_diffusion.data.collate import collate_video_scanpath_bat
 #   --frames-root .\data\frames 
 
 TRAIN_ANNOTATIONS_PATH = ".\\data\\annotations\\ykedata_2s_fix_vid_gaze_train.json" #file used for gathering statistics on fixation durations for normalization
-ANNOTATIONS_PATH = ".\data\\annotations\ykedata_2s_fix_vid_gaze_train.json" #the JSON file you actually want to inspect/build a dataset from (batches)
-FRAMES_ROOT = ".\data\\frames"
+ANNOTATIONS_PATH = ".\\data\\annotations\\ykedata_2s_fix_vid_gaze_train.json" #the JSON file you actually want to inspect/build a dataset from (batches)
+FRAMES_FEATURES_ROOT = ".\\data\\features\\dinov2"
 SPLIT = "train"
 
 FIXED_SCANPATH_LEN = 12
 FIXED_NUM_FRAMES = None
 SCANPATH_PAD_VALUE = 0.0
-FRAME_PAD_VALUE = 0.0
+FRAME_EMB_PAD_VALUE = 0.0
 
 BATCH_SIZE = 2
 SAMPLE_INDEX = 0 #used only to print a raw sample and check normalization
@@ -63,7 +62,7 @@ def make_collate_fn():
         fixed_scanpath_len=FIXED_SCANPATH_LEN,
         fixed_num_frames=FIXED_NUM_FRAMES,
         scanpath_pad_value=SCANPATH_PAD_VALUE,
-        frame_pad_value=FRAME_PAD_VALUE,
+        frame_emb_pad_value=FRAME_EMB_PAD_VALUE,
     )
 
 
@@ -133,18 +132,17 @@ def main() -> None:
     print_section("STEP 4: dataset.py -> load one sample through dataset")
     dataset = VideoScanpathDataset(
         annotations=ANNOTATIONS_PATH,
-        frames_root=FRAMES_ROOT,
+        frame_features_root=FRAMES_FEATURES_ROOT,
         norm_stats=stats,
         split=None,
-        image_transform=None,
-        return_frame_paths=True,
-        convert_images_to_rgb=True,
+        return_feature_paths=True,
     )
 
     dataset_sample = dataset[SAMPLE_INDEX]
     print("Dataset sample keys:")
     print(list(dataset_sample.keys()))
-    print(f"frames.shape: {tuple(dataset_sample['frames'].shape)}")
+    print(f"frame_embeddings.shape: {tuple(dataset_sample['frame_embeddings'].shape)}")
+    print(f"feature_paths: {dataset_sample.get('feature_paths')}")
     print(f"scanpath_tokens.shape: {tuple(dataset_sample['scanpath_tokens'].shape)}")
     print(f"length: {dataset_sample['length']}")
     print(f"frame_names: {dataset_sample['frame_names']}")
@@ -168,7 +166,7 @@ def main() -> None:
 
     print("Batch keys:")
     print(list(batch.keys()))
-    print(f"batch_frames.shape: {tuple(batch['batch_frames'].shape)}")
+    print(f"batch_frame_embeddings.shape: {tuple(batch['batch_frame_embeddings'].shape)}")
     print(f"batch_frame_mask.shape: {tuple(batch['batch_frame_mask'].shape)}")
     print(f"batch_scanpath_tokens.shape: {tuple(batch['batch_scanpath_tokens'].shape)}")
     print(f"batch_scanpath_mask.shape: {tuple(batch['batch_scanpath_mask'].shape)}")
@@ -203,14 +201,14 @@ def main() -> None:
     actual_loader_batch_size = final_batch["batch_scanpath_tokens"].shape[0]
 
     print("Final batch shapes:")
-    print(f"batch_frames.shape: {tuple(final_batch['batch_frames'].shape)}")
+    print(f"batch_frame_embeddings.shape: {tuple(final_batch['batch_frame_embeddings'].shape)}")
     print(f"batch_frame_mask.shape: {tuple(final_batch['batch_frame_mask'].shape)}")
     print(f"batch_scanpath_tokens.shape: {tuple(final_batch['batch_scanpath_tokens'].shape)}")
     print(f"batch_scanpath_mask.shape: {tuple(final_batch['batch_scanpath_mask'].shape)}")
 
     print("\nThis is the tensor shape ready for the model:")
     print(f"batch_scanpath_tokens: {tuple(final_batch['batch_scanpath_tokens'].shape)}")
-    print(f"batch_frames: {tuple(final_batch['batch_frames'].shape)}")
+    print(f"batch_frame_embeddings: {tuple(final_batch['batch_frame_embeddings'].shape)}")
 
     print("\nActual DataLoader batch size:")
     print(actual_loader_batch_size)

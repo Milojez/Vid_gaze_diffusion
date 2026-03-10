@@ -9,7 +9,7 @@ import torch
 FIXED_SCANPATH_LEN = 12
 FIXED_NUM_FRAMES = None
 SCANPATH_PAD_VALUE = 0.0
-FRAME_PAD_VALUE = 0.0
+FRAME_EMB_PAD_VALUE = 0.0
 
 
 def _pad_or_truncate_scanpath(tokens: torch.Tensor, target_len: int, pad_value: float) -> torch.Tensor:
@@ -22,13 +22,17 @@ def _pad_or_truncate_scanpath(tokens: torch.Tensor, target_len: int, pad_value: 
     return out
 
 
-def _pad_or_truncate_frames(frames: torch.Tensor, target_len: int, pad_value: float) -> torch.Tensor:
-    length, c, h, w = frames.shape
+def _pad_or_truncate_frame_embeddings(
+    frame_embeddings: torch.Tensor,
+    target_len: int,
+    pad_value: float,
+) -> torch.Tensor:
+    length, num_patches, dim = frame_embeddings.shape
     if length >= target_len:
-        return frames[:target_len]
+        return frame_embeddings[:target_len]
 
-    out = torch.full((target_len, c, h, w), pad_value, dtype=frames.dtype)
-    out[:length] = frames
+    out = torch.full((target_len, num_patches, dim), pad_value, dtype=frame_embeddings.dtype)
+    out[:length] = frame_embeddings
     return out
 
 
@@ -44,7 +48,7 @@ def collate_video_scanpath_batch(
     fixed_scanpath_len: int = FIXED_SCANPATH_LEN,
     fixed_num_frames: Optional[int] = FIXED_NUM_FRAMES,
     scanpath_pad_value: float = SCANPATH_PAD_VALUE,
-    frame_pad_value: float = FRAME_PAD_VALUE,
+    frame_emb_pad_value: float = FRAME_EMB_PAD_VALUE,
 ) -> Dict:
     if not batch:
         raise ValueError("Empty batch")
@@ -52,25 +56,31 @@ def collate_video_scanpath_batch(
     if fixed_scanpath_len <= 0:
         raise ValueError("fixed_scanpath_len must be > 0")
 
-    first_frame_shape = batch[0]["frames"].shape[1:]
+    first_embedding_shape = batch[0]["frame_embeddings"].shape[1:]
     for i, sample in enumerate(batch):
-        frames = sample["frames"]
+        frame_embeddings = sample["frame_embeddings"]
         tokens = sample["scanpath_tokens"]
 
-        if frames.ndim != 4:
-            raise ValueError(f"Sample {i}: frames must have shape [F, C, H, W]")
+        if frame_embeddings.ndim != 3:
+            raise ValueError(
+                f"Sample {i}: frame_embeddings must have shape [F, N, D]"
+            )
         if tokens.ndim != 2 or tokens.shape[1] != 4:
-            raise ValueError(f"Sample {i}: scanpath_tokens must have shape [L, 4]")
-        if frames.shape[1:] != first_frame_shape:
-            raise ValueError("All samples in a batch must have the same frame shape [C, H, W]")
+            raise ValueError(
+                f"Sample {i}: scanpath_tokens must have shape [L, 4]"
+            )
+        if frame_embeddings.shape[1:] != first_embedding_shape:
+            raise ValueError(
+                "All samples in a batch must have the same frame embedding shape [N, D]"
+            )
 
     target_num_frames = (
         fixed_num_frames
         if fixed_num_frames is not None
-        else max(sample["frames"].shape[0] for sample in batch)
+        else max(sample["frame_embeddings"].shape[0] for sample in batch)
     )
 
-    frames_list = []
+    frame_embeddings_list = []
     frame_masks = []
     scanpaths_list = []
     scanpath_masks = []
@@ -84,17 +94,19 @@ def collate_video_scanpath_batch(
     heights = []
     splits = []
     sample_indices = []
-    frame_paths = []
+    feature_paths = []
 
     for sample in batch:
-        frames = sample["frames"]
+        frame_embeddings = sample["frame_embeddings"]
         tokens = sample["scanpath_tokens"]
 
-        cur_num_frames = frames.shape[0]
+        cur_num_frames = frame_embeddings.shape[0]
         cur_scanpath_len = tokens.shape[0]
 
-        frames_list.append(
-            _pad_or_truncate_frames(frames, target_num_frames, frame_pad_value)
+        frame_embeddings_list.append(
+            _pad_or_truncate_frame_embeddings(
+                frame_embeddings, target_num_frames, frame_emb_pad_value
+            )
         )
         frame_masks.append(_make_mask(cur_num_frames, target_num_frames))
 
@@ -112,13 +124,13 @@ def collate_video_scanpath_batch(
         heights.append(float(sample["height"]))
         splits.append(str(sample["split"]))
         sample_indices.append(int(sample["sample_index"]))
-        frame_paths.append(sample.get("frame_paths"))
+        feature_paths.append(sample.get("feature_paths"))
 
     return {
-        "batch_frames": torch.stack(frames_list, dim=0),
-        "batch_frame_mask": torch.stack(frame_masks, dim=0),
-        "batch_scanpath_tokens": torch.stack(scanpaths_list, dim=0),
-        "batch_scanpath_mask": torch.stack(scanpath_masks, dim=0),
+        "batch_frame_embeddings": torch.stack(frame_embeddings_list, dim=0),   # [B, F, N, D]
+        "batch_frame_mask": torch.stack(frame_masks, dim=0),                   # [B, F]
+        "batch_scanpath_tokens": torch.stack(scanpaths_list, dim=0),           # [B, L, 4]
+        "batch_scanpath_mask": torch.stack(scanpath_masks, dim=0),             # [B, L]
         "scanpath_lengths": torch.tensor(scanpath_lengths, dtype=torch.long),
         "num_frames": torch.tensor(num_frames, dtype=torch.long),
         "frame_names": frame_names,
@@ -127,5 +139,5 @@ def collate_video_scanpath_batch(
         "heights": torch.tensor(heights, dtype=torch.float32),
         "splits": splits,
         "sample_indices": torch.tensor(sample_indices, dtype=torch.long),
-        "frame_paths": frame_paths,
+        "feature_paths": feature_paths,
     }
